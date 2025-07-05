@@ -87,6 +87,13 @@ Invoke-PhantomInjector `
 
 Patches **AmsiScanBuffer** in memory to return `0x80070057` (`E_INVALIDARG`):
 
+```mermaid
+graph LR
+    A[Get AmsiScanBuffer] --> B[Patch Instructions]
+    B --> C[MOV EAX, 0x80070057]
+    C --> D[RET]
+```
+
 ```csharp
 byte[] patch = { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3 }; // mov eax,0x80070057; ret
 ```
@@ -94,6 +101,12 @@ byte[] patch = { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3 }; // mov eax,0x80070057; re
 #### ETW Bypass
 
 Overwrites **EtwEventWrite** with a single `RET` instruction:
+
+```mermaid
+flowchart TD
+    A[Locate EtwEventWrite] --> B[Overwrite with RET]
+    B --> C[Logging Disabled]
+```
 
 ```csharp
 byte[] patch = { 0xC3 }; // ret
@@ -105,6 +118,16 @@ byte[] patch = { 0xC3 }; // ret
 2. Compare exported function bytes against the in-memory copy.  
 3. Overwrite hooked functions in memory:
 
+```mermaid
+sequenceDiagram
+    participant C as Clean NTDLL
+    participant H as Hooked NTDLL
+    C->>H: Compare Exports
+    loop Each Function
+        H->>H: Overwrite Hooked Bytes
+    end
+```
+
 ```csharp
 Marshal.Copy(cleanBytes, 0, hookedAddr, 0x20);
 ```
@@ -113,7 +136,7 @@ Marshal.Copy(cleanBytes, 0, hookedAddr, 0x20);
 
 ### Injection Methods
 
-#### APC Injection
+#### 1 APC Injection
 
 1. Allocate RWX memory in the target process (`VirtualAllocEx`).  
 2. Write shellcode (`WriteProcessMemory`).  
@@ -134,7 +157,7 @@ QueueUserAPC(allocAddr, hThread, IntPtr.Zero);
 ResumeThread(hThread);
 ```
 
-#### Thread Hijacking
+#### 2 Thread Hijacking
 
 1. Enumerate and suspend a target thread.  
 2. Capture and save its context.  
@@ -161,7 +184,7 @@ context.Rip = (ulong)allocAddr;
 SetThreadContext(hThread, ref context);
 ```
 
-#### Process Ghosting
+#### 3 Process Ghosting
 
 1. Begin an NTFS transaction (TxF).  
 2. Write a legitimate template EXE into the transaction.  
