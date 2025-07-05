@@ -120,6 +120,15 @@ Marshal.Copy(cleanBytes, 0, hookedAddr, 0x20);
 3. Queue APC to all threads (`QueueUserAPC`).  
 4. Resume threads to trigger execution.
 
+```mermaid
+graph TD
+    A[Allocate RWX Memory] --> B[Write Shellcode]
+    B --> C[Open Target Threads]
+    C --> D[Queue APC to Threads]
+    D --> E[Resume Threads]
+    E --> F[Shellcode Executes]
+```
+
 ```csharp
 QueueUserAPC(allocAddr, hThread, IntPtr.Zero);
 ResumeThread(hThread);
@@ -133,6 +142,20 @@ ResumeThread(hThread);
 4. Redirect the thread’s instruction pointer (`Rip/Eip`).  
 5. Resume thread.
 
+```mermaid
+sequenceDiagram
+    participant A as Attacker
+    participant T as Target Thread
+    A->>T: SuspendThread()
+    A->>T: GetThreadContext()
+    A->>T: Modify RIP to Shellcode
+    A->>T: SetThreadContext()
+    A->>T: ResumeThread()
+    loop Timeout Protection
+        A->>T: Restore Original Context
+    end
+```
+
 ```csharp
 context.Rip = (ulong)allocAddr;
 SetThreadContext(hThread, ref context);
@@ -145,6 +168,15 @@ SetThreadContext(hThread, ref context);
 3. Spawn the process suspended via `NtCreateSection` / `NtCreateProcessEx`.  
 4. Inject shellcode.  
 5. Commit the transaction to delete the on-disk file, leaving only the in-memory process.
+
+```mermaid
+flowchart LR
+    A[Create Temp File] --> B[Mark for Deletion]
+    B --> C[Create Section]
+    C --> D[Spawn Process]
+    D --> E[Inject Shellcode]
+    E --> F[Resume Process]
+```
 
 ```csharp
 NtCreateSection(out hSection, SEC_ALL_ACCESS, IntPtr.Zero, 0,
