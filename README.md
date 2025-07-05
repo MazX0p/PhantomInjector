@@ -1,4 +1,3 @@
-```markdown
 # PhantomInjector – Advanced In-Memory Process Injection Framework
 
 ![Use: Red Team](https://img.shields.io/badge/Use-Red_Team-orange) ![License: MIT](https://img.shields.io/badge/License-MIT-blue) ![OS: Windows](https://img.shields.io/badge/OS-Windows-lightgrey)
@@ -41,7 +40,6 @@ graph TD
     F --> G[Injection Method]
     G --> H[APC/ThreadHijack/Ghosting/RemoteThread]
     H --> I[Shellcode Execution]
-```
 
 ---
 
