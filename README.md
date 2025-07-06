@@ -70,6 +70,7 @@ Invoke-PhantomInjector `
   -InjectionMethod ThreadHijack
 ```
 
+![image](https://github.com/user-attachments/assets/820f0432-3519-4591-a1e3-acc58a5bfc01)
 
 
 ### 3. Process Ghosting (No Disk)
