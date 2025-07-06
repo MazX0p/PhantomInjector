@@ -295,6 +295,107 @@ NtCreateProcessEx(out hProcess, PROC_ALL_ACCESS, IntPtr.Zero,
   action: alert
 ```
 
+### Sysmon Detection Rules
+
+#### 1. **Base Rule for PhantomInjector Activity**
+```xml
+<RuleGroup name="PhantomInjector" groupRelation="or">
+    <ProcessCreate onmatch="include">
+        <!-- PowerShell spawning uncommon targets -->
+        <CommandLine condition="contains">-InjectionMethod</CommandLine>
+        <ParentImage condition="end with">\powershell.exe</ParentImage>
+        <Image condition="contains">\notepad.exe</Image>
+    </ProcessCreate>
+</RuleGroup>
+```
+
+#### 2. **Syscall-Specific Detection**
+```xml
+<RuleGroup name="DirectSyscall_Detection" groupRelation="and">
+    <ProcessCreate onmatch="include">
+        <CommandLine condition="contains">-UseSyscalls</CommandLine>
+    </ProcessCreate>
+    <FileCreate onmatch="include">
+        <!-- Detects NTDLL unhooking -->
+        <TargetFilename condition="contains">\ntdll.dll</TargetFilename>
+    </FileCreate>
+</RuleGroup>
+```
+
+#### 3. **Memory Protection Alerts**
+```xml
+<RuleGroup name="Memory_Protection_Changes">
+    <MemoryProtection onmatch="include">
+        <!-- RWX memory allocations -->
+        <Protect condition="is">PAGE_EXECUTE_READWRITE</Protect>
+        <CallTrace condition="contains">kernelbase.dll+</CallTrace>
+    </MemoryProtection>
+</RuleGroup>
+```
+
+#### 4. **Process Ghosting Indicators**
+```xml
+<RuleGroup name="Process_Ghosting">
+    <FileCreate onmatch="include">
+        <!-- Temp executable creation + deletion -->
+        <TargetFilename condition="contains">Temp\</TargetFilename>
+        <TargetFilename condition="end with">.exe</TargetFilename>
+    </FileCreate>
+    <ProcessCreate onmatch="include">
+        <CommandLine condition="contains">-InjectionMethod GhostProcess</CommandLine>
+    </ProcessCreate>
+</RuleGroup>
+```
+
+#### 5. **Thread Injection Patterns**
+```xml
+<RuleGroup name="Thread_Injection">
+    <CreateRemoteThread onmatch="include">
+        <!-- PowerShell -> non-child process -->
+        <StartModule condition="is">Unknown</StartModule>
+        <SourceImage condition="end with">\powershell.exe</SourceImage>
+    </CreateRemoteThread>
+</RuleGroup>
+```
+
+---
+
+### Detection Logic Table
+
+| Technique         | Primary Indicator                              | Sysmon Event ID |
+|-------------------|------------------------------------------------|-----------------|
+| APC Injection     | `QueueUserAPC` from non-image memory           | 10              |
+| Thread Hijacking  | `SetThreadContext` RIP modification            | 8               |
+| Process Ghosting  | Section creation from deleted files            | 12              |
+| Syscall Usage     | NTDLL unhooking + unusual call traces          | 7, 11           |
+
+---
+
+#### Recommended Baseline
+
+```yaml
+# Sigma Rule Equivalent
+detection:
+  selection:
+    EventID:
+      - 1   # Process Creation
+      - 8   # Remote Thread
+      - 10  # Process Access
+    Image|endswith:
+      - '\powershell.exe'
+      - '\cmd.exe'
+    CommandLine|contains|all:
+      - '-InjectionMethod'
+      - '-Payload'
+  condition: selection
+```
+
+**Pro Tip:** Combine with these Windows Event Log checks:
+
+- **4688**: Process creation with suspicious command-line  
+- **4657**: Registry changes for COM hijacking  
+- **4104**: Script block logging for PowerShell  
+
 ---
 
 ## Credits
