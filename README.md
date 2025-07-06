@@ -423,6 +423,8 @@ detection:
 - **Author**: 0xMaz Mohamed Alzhrani  
 - Techniques inspired by APCry, Process Ghosting studies, and community malware research.
 
+## TODO:
+- More behavioral evasion
 ---
 
 ## License
