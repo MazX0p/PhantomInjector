@@ -11,7 +11,7 @@ A stealthy PowerShell-based process injection framework implementing multiple in
 - **Multiple Injection Techniques**  
   - APC Injection (Early Bird + `QueueUserAPC`)  
   - Thread Hijacking with crash protection  
-  - Process Ghosting (no disk writes)  
+  - Process Ghosting  
   - Classic Remote Thread Injection  
 
 - **Evasion Capabilities**  
