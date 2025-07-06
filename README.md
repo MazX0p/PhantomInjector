@@ -415,5 +415,6 @@ detection:
 
 ## License
 
+```
 MIT — Use responsibly and only on authorized systems.  
 ```
