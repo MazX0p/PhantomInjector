@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    PhantomInjector v1.0 - Advanced in-memory injection framework with enhanced evasion techniques
+    PhantomInjector v2.0 - Advanced in-memory injection framework with enhanced evasion techniques
 .DESCRIPTION
     This module implements multiple process injection techniques with improved stealth capabilities:
     - APC Injection (Early Bird + QueueUserAPC)
